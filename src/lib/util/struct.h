@@ -36,20 +36,32 @@ typedef ssize_t (*fr_decode_value_t)(TALLOC_CTX *ctx, fr_dcursor_t *cursor, fr_d
 				     fr_dict_attr_t const *parent,
 				     uint8_t const *data, size_t const data_len, void *decoder_ctx);
 
+typedef ssize_t (*fr_decode_value_dbuff_t) (TALLOC_CTX *ctx, fr_dcursor_t *cursor, fr_dict_t const *dict,
+					    fr_dict_attr_t const *parent,
+					    fr_dbuff_t *dbuff, void *decoder_ctx);
+
 ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 			       fr_dict_attr_t const *parent, uint8_t const *data, size_t data_len,
 			       void *decoder_ctx,
 			       fr_decode_value_t decode_value, fr_decode_value_t decode_tlv) CC_HINT(nonnull(2,3,4));
 
+ssize_t fr_struct_from_network_dbuff(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
+				     fr_dict_attr_t const *parent, fr_dbuff_t *dbuff,
+				     void *decoder_ctx,
+				     fr_decode_value_dbuff_t decode_value, fr_decode_value_dbuff_t decode_tlv) CC_HINT(nonnull(2,3,4));
+
 typedef ssize_t (*fr_encode_dbuff_t)(fr_dbuff_t *dbuff, fr_da_stack_t *da_stack, unsigned int depth,
 				     fr_dcursor_t *cursor, void *encoder_ctx);
-	
+
 ssize_t fr_struct_to_network(fr_dbuff_t *dbuff, fr_da_stack_t *da_stack, unsigned int depth,
 			     fr_dcursor_t *cursor, void *encoder_ctx,
 			     fr_encode_dbuff_t encode_value, fr_encode_dbuff_t encode_tlv) CC_HINT(nonnull(1,2,4));
 
 fr_pair_t *fr_raw_from_network(TALLOC_CTX *ctx, fr_dict_attr_t const *parent,
 				    uint8_t const *data, size_t data_len) CC_HINT(nonnull);
+
+fr_pair_t *fr_raw_from_network_dbuff(TALLOC_CTX *ctx, fr_dict_attr_t const *parent,
+				    fr_dbuff_t *dbuff, size_t data_len) CC_HINT(nonnull);
 
 #ifdef __cplusplus
 }

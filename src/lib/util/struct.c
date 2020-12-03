@@ -26,7 +26,23 @@ RCSID("$Id$")
 #include <freeradius-devel/util/struct.h>
 #include <freeradius-devel/util/proto.h>
 
+/*
+ *	Context wrapper to let us, pro tempore, support both dbuff and ptr/len flavored
+ *	struct-from-network decoding without code replication.
+ */
+
+typedef struct {
+	void			*dctx;
+	fr_decode_value_t	decode_value;
+	fr_decode_value_t	decode_tlv;
+} decode_ctx_wrapper;
+
 fr_pair_t *fr_raw_from_network(TALLOC_CTX *ctx, fr_dict_attr_t const *parent, uint8_t const *data, size_t data_len)
+{
+	return fr_raw_from_network_dbuff(ctx, parent, &FR_DBUFF_TMP(data, data_len), data_len);
+}
+
+fr_pair_t *fr_raw_from_network_dbuff(TALLOC_CTX *ctx, fr_dict_attr_t const *parent, fr_dbuff_t *dbuff, size_t data_len)
 {
 	fr_pair_t *vp;
 	fr_dict_attr_t *unknown;
@@ -48,8 +64,8 @@ fr_pair_t *fr_raw_from_network(TALLOC_CTX *ctx, fr_dict_attr_t const *parent, ui
 	fr_dict_unknown_free(&child);
 	if (!vp) return NULL;
 
-	if (fr_value_box_from_network(vp, &vp->data, vp->da->type, vp->da, data, data_len, true) < 0) {
-		talloc_free(vp);
+	if (fr_value_box_from_network_dbuff(vp, &vp->data, vp->da->type, vp->da, dbuff, data_len, true) < 0) {
+		talloc_free(&vp);
 		return NULL;
 	}
 
@@ -57,7 +73,58 @@ fr_pair_t *fr_raw_from_network(TALLOC_CTX *ctx, fr_dict_attr_t const *parent, ui
 	return vp;
 }
 
+/** Get bits from an input dbuff
+ * @param data		points to uint64_t
+ * @param dbuff		the bit source; it is advanced past wholly-read bytes
+ * @param start_bit	bit in to start reading data from, 0..7
+ * @param num_bits 	number of bits to write to the output, 1..56
+ *
+ * @return
+ * 	>= 0	the next value to pass in for start_bit
+ * 	<  0	no space or invalid start_bit or num_bits parameter
+ */
+static int get_bits_dbuff(uint64_t *data, fr_dbuff_t *dbuff, int start_bit, uint8_t num_bits)
+{
+	uint8_t			num_bytes;
+	fr_dbuff_marker_t	start_marker;
 
+	if (start_bit < 0 || start_bit > 7) return -1;
+	if (num_bits < 1 || num_bits > 56) return -1;
+
+	num_bytes = ROUND_UP_DIV(start_bit + num_bits, 8);
+
+	fr_dbuff_marker(&start_marker, dbuff);
+	if (fr_dbuff_extend_lowat(NULL, dbuff, num_bytes) < num_bytes) return -1;
+
+	fr_dbuff_out_uint64v(data, dbuff, num_bytes);
+	*data <<= start_bit + 8 * (8 - num_bytes);
+	*data >>= 64 - num_bits;
+
+	start_bit = (start_bit + num_bits) % 8;
+	if (start_bit) {
+		fr_dbuff_advance(&start_marker, num_bytes - 1);
+		fr_dbuff_set(dbuff, &start_marker);
+	}
+	return start_bit;
+}
+
+
+#define WRAPPED_DECODER_DEF(_kind) \
+static ssize_t wrapped_decode_ ## _kind(TALLOC_CTX *ctx, fr_dcursor_t *cursor, fr_dict_t const *dict, \
+				     fr_dict_attr_t const *parent, fr_dbuff_t *dbuff, \
+				     void *decoder_ctx) \
+{  \
+	decode_ctx_wrapper	*wrapper = (decode_ctx_wrapper *) decoder_ctx; \
+	ssize_t			slen; \
+	slen = wrapper->decode_##_kind(ctx, cursor, dict, parent, \
+				      fr_dbuff_current(dbuff), fr_dbuff_remaining(dbuff), \
+				      decoder_ctx); \
+	if (slen < 0) return slen; \
+	return fr_dbuff_advance(dbuff, (size_t) slen); \
+}
+
+WRAPPED_DECODER_DEF(value)
+WRAPPED_DECODER_DEF(tlv)
 
 /** Convert a STRUCT to one or more VPs
  *
@@ -67,18 +134,38 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 			       void *decoder_ctx,
 			       fr_decode_value_t decode_value, fr_decode_value_t decode_tlv)
 {
+	fr_dbuff_t		dbuff = FR_DBUFF_TMP(data, data_len);
+	decode_ctx_wrapper	wrapper = {
+						.dctx = decoder_ctx,
+						.decode_value = decode_value,
+						.decode_tlv = decode_tlv
+					  };
+
+	return fr_struct_from_network_dbuff(ctx, cursor, parent, &dbuff, &wrapper,
+					    decode_value ? wrapped_decode_value : NULL,
+					    decode_tlv ? wrapped_decode_tlv : NULL);
+}
+
+ssize_t fr_struct_from_network_dbuff(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
+				     fr_dict_attr_t const *parent, fr_dbuff_t *dbuff,
+				     void *decoder_ctx,
+				     fr_decode_value_dbuff_t decode_value, fr_decode_value_dbuff_t decode_tlv)
+{
 	unsigned int		child_num;
-	uint8_t const		*p = data, *end = data + data_len;
 	fr_dict_attr_t const	*child;
 	fr_pair_list_t		head;
 	fr_dcursor_t		child_cursor;
 	fr_pair_t		*vp, *key_vp;
-	unsigned int		offset = 0;
+	int			offset = 0;
+	fr_dbuff_t		work_dbuff, struct_dbuff;
+	fr_dbuff_marker_t	field_marker;
 
 	fr_pair_list_init(&head);
-	if (data_len < 1) return -1; /* at least one byte of data */
+	if (!fr_dbuff_extend(dbuff)) return -1; /* at least one byte of data */
 
-	FR_PROTO_HEX_DUMP(data, data_len, "fr_struct_from_network");
+	work_dbuff = FR_DBUFF_NO_ADVANCE(dbuff);
+
+	FR_PROTO_HEX_DUMP(fr_dbuff_start(dbuff), fr_dbuff_remaining(dbuff), "fr_struct_from_network");
 
 	/*
 	 *	Record where we were in the list when this function was called
@@ -91,18 +178,20 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 	 *	Decode structs with length prefixes.
 	 */
 	if (da_is_length_field(parent)) {
-		size_t struct_len;
+		uint16_t struct_len = 0;
 
-		struct_len = (p[0] << 8) | p[1];
-		if ((struct_len + 2) > data_len) goto unknown;
+		FR_DBUFF_OUT_RETURN(&struct_len, &work_dbuff);
+		if (fr_dbuff_extend_lowat(NULL, &work_dbuff, struct_len) < struct_len) goto unknown;
 
-		data_len = struct_len + 2;
-		end = data + data_len;
-		p += 2;
+		struct_dbuff = FR_DBUFF_MAX(&work_dbuff, struct_len);
+	} else {
+		struct_dbuff = FR_DBUFF_COPY(&work_dbuff);
 	}
 
-	while (p < end) {
-		size_t child_length;
+	fr_dbuff_marker(&field_marker, &work_dbuff);
+
+	while (fr_dbuff_extend(&struct_dbuff)) {
+		size_t child_length = 0;
 
 		/*
 		 *	Go to the next child.  If it doesn't exist, we're done.
@@ -110,28 +199,17 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		child = fr_dict_attr_child_by_num(parent, child_num);
 		if (!child) break;
 
-		FR_PROTO_HEX_DUMP(p, (end - p), "fr_struct_from_network - child %s (%d)", child->name, child->attr);
+		FR_PROTO_HEX_DUMP(fr_dbuff_current(&struct_dbuff), fr_dbuff_remaining(&struct_dbuff),
+				  "fr_struct_from_network - child %s (%d)", child->name, child->attr);
 
 		/*
 		 *	Check for bit fields.
 		 */
 		if (da_is_bit_field(child)) {
-			uint8_t array[8];
-			unsigned int num_bits;
-			uint64_t value;
+			uint64_t value = 0;
 
-			num_bits = offset + child->flags.length;
-			if ((end - p) < fr_bytes_from_bits(num_bits)) goto unknown;
-
-			memset(array, 0, sizeof(array));
-			memcpy(&array[0], p, fr_bytes_from_bits(num_bits));
-
-			if (offset > 0) array[0] &= (1 << (8 - offset)) - 1; /* mask off bits we don't care about */
-
-			memcpy(&value, &array[0], sizeof(value));
-			value = htonll(value);
-			value >>= (8 - offset); /* move it to the lower bits */
-			value >>= (56 - child->flags.length);
+			offset = get_bits_dbuff(&value, &struct_dbuff, offset, child->flags.length);
+			if (offset < 0) goto unknown;
 
 			vp = fr_pair_afrom_da(ctx, child);
 			if (!vp) {
@@ -167,12 +245,16 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 			vp->type = VT_DATA;
 			vp->vp_tainted = true;
 			fr_dcursor_append(&child_cursor, vp);
-			p += (num_bits >> 3); /* go to the LAST bit, not the byte AFTER the last bit */
-			offset = num_bits & 0x07;
 			child_num++;
 			continue;
 		}
-		offset = 0;	/* reset for non-bit-field attributes */
+
+		/* Not a bit field; insist that no buffered bits remain. */
+		if (offset != 0) {
+		leftover_bits:
+			fr_strerror_printf("leftover bits");
+			return -1;
+		}
 
 		/*
 		 *	Decode child TLVs, according to the parent attribute.
@@ -184,20 +266,21 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 
 			if (!decode_tlv) {
 				fr_strerror_const("Decoding TLVs requires a decode_tlv() function to be passed");
-				return -(p - data);
+				return -fr_dbuff_used(&work_dbuff);
 			}
 
 			/*
 			 *	Decode EVERYTHING as a TLV.
 			 */
-			while (p < end) {
-				slen = decode_tlv(ctx, &child_cursor, fr_dict_by_da(child), child, p, end - p, decoder_ctx);
+			while (fr_dbuff_extend(&struct_dbuff)) {
+				slen = decode_tlv(ctx, &child_cursor, fr_dict_by_da(child), child, &struct_dbuff, decoder_ctx);
 				if (slen < 0) goto unknown;
-				p += slen;
 			}
 
 			goto done;
 		}
+
+		fr_dbuff_set(&field_marker, &struct_dbuff);
 
 		child_length = child->flags.length;
 
@@ -205,12 +288,12 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		 *	If this field overflows the input, then *all*
 		 *	of the input is suspect.
 		 */
-		if ((p + child_length) > end) {
+		if (fr_dbuff_extend_lowat(NULL, &struct_dbuff, child_length) < child_length) {
 			FR_PROTO_TRACE("fr_struct_from_network - child length %zd overflows buffer", child_length);
 			goto unknown;
 		}
 
-		if (!child_length) child_length = (end - p);
+		if (!child_length) child_length = fr_dbuff_remaining(&struct_dbuff);
 
 		/*
 		 *	Magic values get the callback called.
@@ -221,10 +304,10 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		if (decode_value) {
 			ssize_t slen;
 
-			slen = decode_value(ctx, &child_cursor, fr_dict_by_da(child), child, p, child_length, decoder_ctx);
-			if (slen < 0) return slen - (p - data);
+			slen = decode_value(ctx, &child_cursor, fr_dict_by_da(child), child,
+					    &FR_DBUFF_MAX(&struct_dbuff, child_length), decoder_ctx);
+			if (slen < 0) return slen - fr_dbuff_used(&work_dbuff);
 
-			p += slen;   	/* not always the same as child->flags.length */
 			child_num++;	/* go to the next child */
 			if (fr_dict_attr_is_key_field(child)) key_vp = fr_dcursor_tail(&child_cursor);
 			continue;
@@ -255,20 +338,22 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		 *	If we can't decode this field, then the entire
 		 *	structure is treated as a raw blob.
 		 */
-		if (fr_value_box_from_network(vp, &vp->data, vp->da->type, vp->da, p, child_length, true) < 0) {
+		if (fr_value_box_from_network_dbuff(vp, &vp->data, vp->da->type, vp->da,
+						    &FR_DBUFF_MAX(&struct_dbuff, child_length), child_length, true) < 0) {
 			FR_PROTO_TRACE("fr_struct_from_network - failed decoding child VP");
 			talloc_free(vp);
 		unknown:
 			fr_pair_list_free(&head);
 
-			vp = fr_raw_from_network(ctx, parent, data, data_len);
+			fr_dbuff_set_to_start(&work_dbuff);
+			vp = fr_raw_from_network_dbuff(ctx, parent, &work_dbuff, fr_dbuff_remaining(&work_dbuff));
 			if (!vp) return -1;
 
 			/*
 			 *	And append this one VP to the output cursor.
 			 */
 			fr_dcursor_append(cursor, vp);
-			return data_len;
+			return fr_dbuff_set(dbuff, &work_dbuff);
 		}
 
 		vp->type = VT_DATA;
@@ -282,9 +367,13 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		 *	So we skip the input based on the *known*
 		 *	length, and not on the *decoded* length.
 		 */
-		p += child_length;
+		fr_dbuff_advance(&field_marker, child_length);
+		fr_dbuff_set(&struct_dbuff, &field_marker);
 		child_num++;	/* go to the next child */
 	}
+
+	/* Check for leftover bits */
+	if (offset != 0) goto leftover_bits;
 
 	/*
 	 *	Is there a substructure after this one?  If so, go
@@ -295,12 +384,13 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		fr_dict_enum_t const *enumv;
 		child = NULL;
 
-		FR_PROTO_HEX_DUMP(p, (end - p), "fr_struct_from_network - substruct");
+		FR_PROTO_HEX_DUMP(fr_dbuff_current(&struct_dbuff),  fr_dbuff_remaining(&struct_dbuff),
+				  "fr_struct_from_network - substruct");
 
 		/*
 		 *	Nothing more to decode, don't decode it.
 		 */
-		if (p >= end) goto done;
+		if (!fr_dbuff_remaining(&struct_dbuff)) goto done;
 
 		enumv = fr_dict_enum_by_value(key_vp->da, &key_vp->data);
 		if (enumv) child = enumv->child_struct[0];
@@ -317,21 +407,20 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 							     fr_dict_vendor_num_by_da(key_vp->da), 0);
 			if (!child) goto unknown;
 
-			vp = fr_raw_from_network(ctx, child, p, end - p);
+			vp = fr_raw_from_network_dbuff(ctx, child, &struct_dbuff, fr_dbuff_remaining(&struct_dbuff));
 			if (!vp) {
 				fr_dict_unknown_free(&child);
-				return -(p - data);
+				return -(fr_dbuff_used(&work_dbuff));
 			}
 
 			fr_dcursor_append(&child_cursor, vp);
-			p = end;
+			fr_dbuff_set_to_end(&work_dbuff);
 		} else {
 			fr_assert(child->type == FR_TYPE_STRUCT);
 
-			slen = fr_struct_from_network(ctx, &child_cursor, child, p, end - p,
+			slen = fr_struct_from_network_dbuff(ctx, &child_cursor, child, &work_dbuff,
 						      decoder_ctx, decode_value, decode_tlv);
 			if (slen <= 0) goto unknown_child;
-			p += slen;
 		}
 
 		fr_dict_unknown_free(&child);
@@ -345,7 +434,7 @@ ssize_t fr_struct_from_network(TALLOC_CTX *ctx, fr_dcursor_t *cursor,
 		 *	the substruct ends in a TLV, we decode only
 		 *	the fixed-length portion of the structure.
 		 */
-		return p - data;
+		return fr_dbuff_set(dbuff, &work_dbuff);
 	}
 
 done:
@@ -353,7 +442,7 @@ done:
 	fr_dcursor_tail(cursor);
 	fr_dcursor_merge(cursor, &child_cursor);	/* Wind to the end of the new pairs */
 
-	return data_len;
+	return fr_dbuff_set(dbuff, &work_dbuff);
 }
 
 
@@ -613,7 +702,7 @@ ssize_t fr_struct_to_network(fr_dbuff_t *dbuff,
 				fr_dict_attr_t **u;
 
 				memcpy(&u, &c, sizeof(c)); /* const issues */
-				memcpy(u, &vp->da, sizeof(vp->da));			
+				memcpy(u, &vp->da, sizeof(vp->da));
 			}
 
 			/*
