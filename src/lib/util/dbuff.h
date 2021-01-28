@@ -107,6 +107,18 @@ typedef struct fr_dbuff_marker_s fr_dbuff_marker_t;
  */
 typedef size_t(*fr_dbuff_extend_t)(fr_dbuff_t *dbuff, size_t req_extension);
 
+/** dbuff max callback
+ *
+ * This callback determines how extensible the FR_DBUFF_MAX() child of an
+ * extensible dbuff should be.
+ *
+ * @param[in] dbuff		parent
+ * @param[in] max 		the max value passed to FR_DBUFF_MAX()
+ * @return the max value to use for the child.
+ * @see FR_DBUFF_MAX
+ */
+typedef size_t(*fr_dbuff_max_calc_t)(fr_dbuff_t *dbuff, size_t max);
+
 /** A position marker associated with a dbuff
  * @private
  */
@@ -163,6 +175,11 @@ struct fr_dbuff_s {
 	fr_dbuff_extend_t	extend;		//!< Function to re-populate or extend
 						///< the buffer.
 	void			*uctx;		//!< Extend uctx data.
+
+	fr_dbuff_max_calc_t	max_calc;	//!< Function to determine max for a
+						///< _FR_DBUFF_MAX() child
+	size_t			max;		//!< Maximum buffer size (talloc)
+						///< or bytes to read (fd)
 
 	fr_dbuff_t		*parent;	//!< The #fr_dbuff_t this #fr_dbuff_t was
 						///< created from.
@@ -227,22 +244,25 @@ do { \
 
 /** @cond */
 
-/** Limit available bytes in the dbufft to _max when passing it to another function
+/** Limit available bytes in the dbuff to _max when passing it to another function
  *
  * @private
  */
 #define _FR_DBUFF_MAX(_dbuff, _max, _adv_parent) \
-(fr_dbuff_t){ \
-	.buff		= (_dbuff)->buff, \
-	.start		= (_dbuff)->p, \
-	.end		= (((((_dbuff)->end) - (_max) < (_dbuff)->p)) ? (_dbuff)->end : ((_dbuff)->p + (_max))), \
-	.p		= (_dbuff)->p, \
-	.is_const	= (_dbuff)->is_const, \
-	.adv_parent	= _adv_parent, \
-	.shifted	= (_dbuff)->shifted, \
-	.extend		= NULL, \
-	.uctx		= NULL, \
-	.parent		= (_dbuff) \
+(fr_dbuff_t) {\
+	.buff = (_dbuff)->buff, \
+	.start = (_dbuff)->p, \
+	.end = (fr_dbuff_remaining(_dbuff) >= (_max)) ? ((_dbuff)->p + (_max)) : ((_dbuff)->end), \
+	.p = (_dbuff)->p, \
+	.is_const = (_dbuff)->is_const, \
+	.adv_parent = (_adv_parent), \
+	.shifted = (fr_dbuff_remaining(_dbuff) >= (_max)) ? 0 : ((_dbuff)->shifted), \
+	.extend = (fr_dbuff_remaining(_dbuff) >= (_max)) ? NULL : ((_dbuff)->extend), \
+	.max_calc = (fr_dbuff_remaining(_dbuff) >= (_max)) ? NULL : ((_dbuff)->max_calc), \
+	.max = (fr_dbuff_remaining(_dbuff) >= (_max)) ? 0 : \
+	       !((_dbuff)->max_calc)                   ? 0 : (_dbuff)->max_calc(_dbuff, _max), \
+	.uctx = (fr_dbuff_remaining(_dbuff) >= (_max)) ? NULL : ((_dbuff)->uctx), \
+	.parent = (_dbuff) \
 }
 /* @endcond */
 
@@ -329,6 +349,8 @@ _fr_dbuff_init(_out, \
 
 size_t	_fr_dbuff_extend_talloc(fr_dbuff_t *dbuff, size_t extension);
 
+size_t	_fr_dbuff_max_calc_talloc(fr_dbuff_t *dbuff, size_t max);
+
 /** Talloc extension structure use by #fr_dbuff_init_talloc
  * @private
  *
@@ -338,7 +360,6 @@ size_t	_fr_dbuff_extend_talloc(fr_dbuff_t *dbuff, size_t extension);
 typedef struct {
 	TALLOC_CTX		*ctx;			//!< Context to alloc new buffers in.
 	size_t			init;			//!< How much to allocate initially.
-	size_t			max;			//!< Maximum size of the buffer.
 } fr_dbuff_uctx_talloc_t;
 
 /** Initialise a special dbuff which automatically extends as additional data is written
@@ -360,8 +381,7 @@ static inline fr_dbuff_t *fr_dbuff_init_talloc(TALLOC_CTX *ctx,
 
 	*tctx = (fr_dbuff_uctx_talloc_t){
 		.ctx = ctx,
-		.init = init,
-		.max = max
+		.init = init
 	};
 
 	/*
@@ -385,13 +405,17 @@ static inline fr_dbuff_t *fr_dbuff_init_talloc(TALLOC_CTX *ctx,
 		.p = buff,
 		.end = buff + init,
 		.extend = _fr_dbuff_extend_talloc,
-		.uctx = tctx
+		.uctx = tctx,
+		.max_calc = _fr_dbuff_max_calc_talloc,
+		.max = max
 	};
 
 	return dbuff;
 }
 
 size_t	_fr_dbuff_extend_fd(fr_dbuff_t *dbuff, size_t extension);
+
+size_t	_fr_dbuff_max_calc_fd(fr_dbuff_t *dbuff, size_t max);
 
 /** File sbuff extension structure use by #fr_dbuff_init_fd
  * @private
@@ -402,7 +426,6 @@ size_t	_fr_dbuff_extend_fd(fr_dbuff_t *dbuff, size_t extension);
 typedef struct {
 	int			fd;			//!< fd of file we're reading from.
 	uint8_t			*buff_end;		//!< The true end of the buffer.
-	size_t			max;			//!< Maximum number of bytes to read.
 } fr_dbuff_uctx_fd_t;
 
 
@@ -423,7 +446,6 @@ static inline fr_dbuff_t *fr_dbuff_init_fd(fr_dbuff_t *dbuff, fr_dbuff_uctx_fd_t
 {
 	*fctx = (fr_dbuff_uctx_fd_t){
 		.fd = fd,
-		.max = max,
 		.buff_end = buff + len		//!< Store the real end
 	};
 
@@ -433,7 +455,9 @@ static inline fr_dbuff_t *fr_dbuff_init_fd(fr_dbuff_t *dbuff, fr_dbuff_uctx_fd_t
 		.p = buff,
 		.end = buff,			//!< Starts with 0 bytes available
 		.extend = _fr_dbuff_extend_fd,
-		.uctx = fctx
+		.uctx = fctx,
+		.max_calc = _fr_dbuff_max_calc_fd,
+		.max = max
 	};
 
 	return dbuff;

@@ -174,7 +174,7 @@ size_t _fr_dbuff_extend_fd(fr_dbuff_t *dbuff, size_t extension)
 	if (extension == SIZE_MAX) extension = 0;
 
 	total_read = dbuff->shifted + (dbuff->end - dbuff->buff);
-	if (total_read >= fctx->max) {
+	if (total_read >= dbuff->max) {
 		fr_strerror_printf("Can't satisfy extension request for %zu bytes", extension);
 		return 0;	/* There's no way we could satisfy the extension request */
 	}
@@ -189,7 +189,7 @@ size_t _fr_dbuff_extend_fd(fr_dbuff_t *dbuff, size_t extension)
 		fr_dbuff_shift(dbuff, fr_dbuff_used(dbuff));
 	}
 
-	available = min(fctx->buff_end - dbuff->end, fctx->max - total_read);
+	available = min(fctx->buff_end - dbuff->end, dbuff->max - total_read);
 	if (available < extension) {
 		fr_strerror_printf("Can't satisfy extension request for %zu bytes", extension);
 		return 0;	/* There's no way we could satisfy the extension request */
@@ -208,6 +208,23 @@ size_t _fr_dbuff_extend_fd(fr_dbuff_t *dbuff, size_t extension)
 	dbuff->end += bytes_read;	/* Advance end, which increases fr_dbuff_remaining() */
 
 	return bytes_read;
+}
+
+/** Determine max value for FR_DBUFF_MAX[_NO_ADVANCE](dbuff, max) where dbuff is fd-flavored.
+ *
+ * @private
+ *
+ * @param[in] dbuff		parent
+ * @param[in] max		max passed to FR_DBUFF_MAX()
+ * @return the max value to use in child
+ */
+
+size_t	_fr_dbuff_max_calc_fd(fr_dbuff_t *dbuff, size_t max)
+{
+	size_t	total_read = dbuff->shifted + (dbuff->end - dbuff->buff);
+	size_t	additional = max - fr_dbuff_remaining(dbuff);
+
+	return min(dbuff->max, total_read + additional);
 }
 
 /** Reallocate the current buffer
@@ -251,12 +268,12 @@ size_t _fr_dbuff_extend_talloc(fr_dbuff_t *dbuff, size_t extension)
 	 *	Check we don't exceed the maximum buffer
 	 *	length.
 	 */
-	if (tctx->max && ((clen + elen) > tctx->max)) {
-		elen = tctx->max - clen;
+	if (dbuff->max && ((clen + elen) > dbuff->max)) {
+		elen = dbuff->max - clen;
 		if (elen == 0) {
 			fr_strerror_printf("Failed extending buffer by %zu bytes to "
 					   "%zu bytes, max is %zu bytes",
-					   extension, clen + extension, tctx->max);
+					   extension, clen + extension, dbuff->max);
 			return 0;
 		}
 	}
@@ -272,3 +289,18 @@ size_t _fr_dbuff_extend_talloc(fr_dbuff_t *dbuff, size_t extension)
 
 	return elen;
 }
+
+/** Determine max value for FR_DBUFF_MAX[_NO_ADVANCE](dbuff, max) where dbuff is fd-flavored.
+ *
+ * @private
+ *
+ * @param[in] dbuff		parent
+ * @param[in] max		max passed to FR_DBUFF_MAX()
+ * @return the max value to use in child
+ */
+
+size_t	_fr_dbuff_max_calc_talloc(fr_dbuff_t *dbuff, size_t max)
+{
+	return min(dbuff->max, (dbuff->p + max) - dbuff->buff);
+}
+

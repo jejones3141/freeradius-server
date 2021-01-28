@@ -407,11 +407,11 @@ static void test_dbuff_talloc_extend_multi_level(void)
 	TEST_CHECK(fr_dbuff_remaining(&dbuff2) == 0);
 
 	dbuff2 = FR_DBUFF_MAX(&dbuff1, 8);
-	TEST_CASE("Check that FR_DBUFF_MAX() is not extensible");
-	TEST_CHECK(dbuff2.extend == NULL);
-	TEST_CHECK(dbuff2.uctx == NULL);
+	TEST_CASE("Check that FR_DBUFF_MAX() honors max");
+	TEST_CHECK(dbuff2.max == 8);
 	TEST_CHECK(fr_dbuff_used(&dbuff2) == 0);
 	TEST_CHECK(fr_dbuff_remaining(&dbuff2) == 0);
+	TEST_CHECK(fr_dbuff_in(&dbuff2, (uint64_t) 0x123456789abcdef0) == 8);
 	TEST_CHECK(fr_dbuff_in(&dbuff2, (uint64_t) 0x123456789abcdef0) == -8);
 
 	talloc_free(dbuff1.buff);
