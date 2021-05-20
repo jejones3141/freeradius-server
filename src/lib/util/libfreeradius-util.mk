@@ -55,6 +55,7 @@ SOURCES		:= \
 		   perm.c \
 		   print.c \
 		   proto.c \
+		   quickheap.c \
 		   rand.c \
 		   rb.c \
 		   regex.c \
