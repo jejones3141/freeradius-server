@@ -23,6 +23,10 @@
  */
 RCSIDH(seq_heap_h, "")
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct fr_seq_heap_s fr_seq_heap_t;
 
 /** Creates a sequence heap that can be used with non-talloced elements
@@ -46,3 +50,11 @@ typedef struct fr_seq_heap_s fr_seq_heap_t;
 #define fr_seq_heap_talloc_alloc(_ctx, _cmp, _talloc_type) \
 	_fr_seq_heap_alloc(_ctx, _cmp, #_talloc_type)
 
+fr_seq_heap_t *_fr_seq_heap_alloc(TALLOC_CTX *ctx, fr_heap_cmp_t cmp, char const *type) CCHINT(nonnull(1));
+
+void *fr_seq_heap_pop(fr_seq_heap_t *shp) CCHINT(nonnull);
+int fr_seq_heap_insert(fr_heap_t *shp, void *data) CCHINT(nonnull);
+
+#ifdef __cplusplus
+}
+#endif
