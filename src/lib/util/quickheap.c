@@ -39,13 +39,13 @@ typedef struct {
 	uint32_t	depth;
 	uint32_t	size;
 	uint32_t	*data;
-}	stack_t;
+}	pivot_stack_t;
 
 struct fr_quickheap_s {
 	uint32_t	capacity;
 	uint32_t	idx;
 	void		**heap;
-	stack_t		*s;		/* a stack of indices of pivots */
+	pivot_stack_t	*s;
 	fr_fast_rand_t	rand_ctx;	/* for random choice of pivot in incremental_quicksort */
 	char const	*type;
 	fr_heap_cmp_t	cmp;
@@ -54,7 +54,7 @@ struct fr_quickheap_s {
 static void incremental_quicksort(fr_quickheap_t *qh);
 static size_t partition(fr_quickheap_t *qh, void *pivot, size_t low, size_t high);
 
-static stack_t	*stack_alloc(TALLOC_CTX *ctx);
+static pivot_stack_t *stack_alloc(TALLOC_CTX *ctx);
 
 /*
  * The quickheap as defined in the paper have a fixed size set at creation.
@@ -70,11 +70,11 @@ static stack_t	*stack_alloc(TALLOC_CTX *ctx);
  */
 #define heap_sub(_qh, _n)	((_qh)->heap[(_n) % (_qh)->capacity])
 
-static stack_t	*stack_alloc(TALLOC_CTX *ctx)
+static pivot_stack_t	*stack_alloc(TALLOC_CTX *ctx)
 {
-	stack_t	*s;
+	pivot_stack_t	*s;
 
-	s = talloc_zero(ctx, stack_t);
+	s = talloc_zero(ctx, pivot_stack_t);
 	if (!s) return NULL;
 
 	s->data = talloc_array(s, uint32_t, INITIAL_STACK_CAPACITY);
@@ -87,34 +87,34 @@ static stack_t	*stack_alloc(TALLOC_CTX *ctx)
 	return s;
 }
 
-static void stack_push(stack_t *s, uint32_t pivot)
+static void stack_push(pivot_stack_t *s, uint32_t pivot)
 {
 	/* todo: try to extend if it's full */
 	s->data[s->depth++] = pivot;
 }
 
-static uint32_t stack_top(stack_t *s)
+static uint32_t stack_top(pivot_stack_t *s)
 {
 	/* */
 	return s->data[s->depth - 1];
 }
 
-static void stack_pop(stack_t *s)
+static void stack_pop(pivot_stack_t *s)
 {
 	s->depth--;
 }
 
-static uint32_t stack_depth(stack_t *s)
+static uint32_t stack_depth(pivot_stack_t *s)
 {
 	return s->depth;
 }
 
-static uint32_t stack_item(stack_t *s, uint32_t index)
+static uint32_t stack_item(pivot_stack_t *s, uint32_t index)
 {
 	return s->data[index];
 }
 
-static void stack_set(stack_t *s, uint32_t index, uint32_t new_value)
+static void stack_set(pivot_stack_t *s, uint32_t index, uint32_t new_value)
 {
 	s->data[index] = new_value;
 }
