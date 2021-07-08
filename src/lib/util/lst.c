@@ -555,8 +555,13 @@ int fr_lst_extract(fr_lst_t *lst, void *data)
 
 	if (!data) return fr_lst_pop(lst) ? 1 : -1;
 
+	if (unlikely(lst->num_elements == 0)) {
+		fr_strerror_const("Tried to extract element from empty heap");
+		return -1;
+	}
+
 	location = item_index(lst, data);
-	if (location >= stack_item(lst->s, 0)) return -1;		// does this check need revision?
+	if (unlikely(location < 0)) return -1;
 
 	for (stack_index = stack_depth(lst->s); stack_item(lst->s, --stack_index) < location; ) ;
 
