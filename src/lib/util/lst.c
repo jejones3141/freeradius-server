@@ -155,7 +155,6 @@ static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
 #define equivalent(_lst, _index1, _index2)	(reduce((_lst), (_index1) - (_index2)) == 0)
 #define item(_lst, _index)			((_lst)->p[reduce((_lst), (_index))])
 #define reduce(_lst, _index)			((_index) & ((_lst)->capacity - 1))
-#define pivot(_lst, _index)			item((_lst), stack_item((_lst)->s, (_index)))
 
 /*
  * The LST as defined in the paper has a fixed size set at creation.
