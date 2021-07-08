@@ -225,22 +225,22 @@ static int stack_push(pivot_stack_t *s, int32_t pivot)
 	return 0;
 }
 
-static inline void stack_pop(pivot_stack_t *s, int32_t n)
+inline static void stack_pop(pivot_stack_t *s, int32_t n)
 {
 	s->depth -= n;
 }
 
-static inline int32_t stack_depth(pivot_stack_t *s)
+inline static int32_t stack_depth(pivot_stack_t *s)
 {
 	return s->depth;
 }
 
-static inline int32_t stack_item(pivot_stack_t *s, int32_t index)
+inline static int32_t stack_item(pivot_stack_t *s, int32_t index)
 {
 	return s->data[index];
 }
 
-static inline void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
+inline static void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
 {
 	s->data[index] = new_value;
 }
@@ -281,7 +281,7 @@ cleanup:
 /*
  * The length function for LSTs (how many buckets it contains)
  */
-static inline int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
+inline static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_depth(lst->s) - stack_index;
 }
@@ -289,7 +289,7 @@ static inline int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
 /*
  * The size function for LSTs (number of items a (sub)tree contains)
  */
-static inline int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
+inline static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
 {
 	int32_t	reduced_right, reduced_idx;
 
@@ -308,7 +308,7 @@ static inline int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
  * NOTE: so doing leaves the passed stack_index valid--we just add
  * everything once in the left subtree to it.
  */
-static inline void lst_flatten(fr_lst_t *lst, int32_t stack_index)
+inline static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
 {
 	stack_pop(lst->s, stack_depth(lst->s) - (stack_index + 0));
 }
@@ -318,7 +318,7 @@ static inline void lst_flatten(fr_lst_t *lst, int32_t stack_index)
  * The caller must have made sure the location is available and exists
  * in said array.
  */
-static inline int lst_move(fr_lst_t *lst, int32_t location, void *data)
+inline static int lst_move(fr_lst_t *lst, int32_t location, void *data)
 {
 	if (unlikely(!data)) return -1;
 
@@ -457,7 +457,7 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 	return 0;
 }
 
-static inline int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
+inline static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
 {
 	if (is_bucket(lst, stack_index)) return lst->idx;
 	return stack_item(lst->s, stack_index + 1) + 1;
@@ -468,7 +468,7 @@ static inline int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
  * be one less than the upper bound, and should that be the leftmost bucket,
  * will actually be -1.
  */
-static inline int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
+inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_item(lst->s, stack_index) - 1;
 }
@@ -624,7 +624,7 @@ void *fr_lst_pop(fr_lst_t *lst)
 	return min;
 }
 
-int32_t inline fr_lst_num_elements(fr_lst_t *lst)
+int32_t fr_lst_num_elements(fr_lst_t *lst)
 {
 	return lst->num_elements;
 }
