@@ -370,6 +370,21 @@ static void bucket_add(fr_lst_t *lst, int32_t stack_index, void *data)
 }
 
 /*
+ * Reduces pivot stack indices based on their difference from lst->idx,
+ * and then reduces lst->idx.
+ */
+static void lst_reduce_indices(fr_lst_t *lst)
+{
+	int32_t	reduced_idx = reduce(lst, lst->idx);
+	int32_t	depth = stack_depth(lst->s);
+
+	for (int32_t i = 0; i < depth; i++) {
+		stack_set(lst->s, i, reduced_idx + stack_item(lst->s, i) - lst->idx);
+	}
+	lst->idx = reduced_idx;
+}
+
+/*
  * Make more space available in an LST.
  * The LST paper only mentions this option in passing, pointing out that it's O(n); the only
  * constructor in the paper lets you hand it an array of items to initiailly insert
@@ -390,8 +405,6 @@ static bool lst_expand(fr_lst_t *lst)
 	void 	**n;
 	size_t	n_capacity = 2 * lst->capacity;
 	int32_t	old_capacity = lst->capacity;
-	int32_t	reduced_idx = reduce(lst, lst->idx);
-	int32_t	depth = stack_depth(lst->s);
 
 	n = talloc_realloc(lst, lst->p, void *, n_capacity);
 	if (!n) {
@@ -403,20 +416,9 @@ static bool lst_expand(fr_lst_t *lst)
 	lst->p = n;
 	lst->capacity = n_capacity;
 
-	/*
-	 * We get here when the array is full. idx starts out at zero, but may,
-	 * thanks to the optimization in bucket_delete(), have been advanced to
-	 * a different position. So, all the elements physically located in the
-	 * array from 0 to reduced_idx - 1 have to be moved to positions starting
-	 * at what the capacity was before doubling, and pivot indices adjusted
-	 * to match... but we adjust them all to try to keep them from overflow.
-	 */
-	for (int32_t i = 0; i < depth; i++) {
-		stack_set(lst->s, i, reduced_idx + stack_item(lst->s, i) - lst->idx);
-	}
-	lst->idx = reduced_idx;
+	lst_reduce_indices(lst);
 
-	for (int32_t i = 0; i < reduced_idx; i++) {
+	for (int32_t i = 0; i < lst->idx; i++) {
 		void	*to_be_moved = item(lst, i);
 		int32_t	new_index = item_index(lst, to_be_moved) + old_capacity;
 		lst_move(lst, new_index, to_be_moved);
@@ -525,6 +527,7 @@ static void bucket_delete(fr_lst_t *lst, void *data)
 
 	if (equivalent(lst, location, lst->idx)) {
 		lst->idx++;
+		if (equivalent(lst, lst->idx, 0)) lst_reduce_indices(lst);
 	} else {
 		for (stack_index = stack_depth(lst->s); stack_item(lst->s, --stack_index) < location; ) ;
 
