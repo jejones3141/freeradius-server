@@ -123,12 +123,8 @@ static void lst_test(int skip)
 
 	left = fr_lst_num_elements(lst);
 	for (i = 0; i < left; i++) {
-		heap_thing *t;
-
-		TEST_CHECK((t = fr_lst_peek(lst)) != NULL);
+		TEST_CHECK(fr_lst_pop(lst) != NULL);
 		TEST_MSG("expected %i elements remaining in the heap", left - i);
-
-		TEST_CHECK(fr_lst_extract(lst, NULL) >= 0);
 		TEST_MSG("failed extracting %i", i);
 	}
 
@@ -328,13 +324,9 @@ static void lst_cycle(void)
 	to_remove = fr_lst_num_elements(lst) / 2;
 	start_remove = fr_time();
 	for (i = 0; i < to_remove; i++) {
-		heap_thing *t;
-
-		TEST_CHECK((t = fr_lst_peek(lst)) != NULL);
-		TEST_MSG("expected %i elements remaining in the LST", to_remove - i);
-
-		TEST_CHECK(fr_lst_extract(lst, NULL) >= 0);
+		TEST_CHECK(fr_lst_pop(lst) != NULL);
 		TEST_MSG("failed extracting %i", i);
+		TEST_MSG("expected %i elements remaining in the LST", to_remove - i);
 	}
 
 	/*

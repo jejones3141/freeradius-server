@@ -69,12 +69,12 @@ int 	fr_lst_insert(fr_lst_t *lst, void *data) CC_HINT(nonnull);
 /** Remove an element from an LST
  *
  * @param[in] lst		the LST to remove an element from
- * @param[in] data		if non-NULL, the element to remove; if NULL, pop and discard the "minimum"
+ * @param[in] data		the element to remove
  * @return
  *	- 0 if removal succeeds
  * 	- -1 if removal fails
  */
-int	fr_lst_extract(fr_lst_t *lst, void *data) CC_HINT(nonnull(1));
+int	fr_lst_extract(fr_lst_t *lst, void *data) CC_HINT(nonnull);
 
 int32_t	fr_lst_num_elements(fr_lst_t *lst) CC_HINT(nonnull);
 

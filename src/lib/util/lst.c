@@ -555,8 +555,6 @@ int fr_lst_extract(fr_lst_t *lst, void *data)
 {
 	int32_t	stack_index, location;
 
-	if (!data) return fr_lst_pop(lst) ? 1 : -1;
-
 	if (unlikely(lst->num_elements == 0)) {
 		fr_strerror_const("Tried to extract element from empty heap");
 		return -1;
