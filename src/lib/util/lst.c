@@ -27,14 +27,14 @@ RCSID("")
 #include <freeradius-devel/util/strerror.h>
 
 /*
- * Leftmost Skeleton Trees are defined in "Stronger Quickheaps" (Navarro, Gonzalo,
+ * Leftmost Skeleton Trees are defined in "Stronger Quickheaps" (Gonzalo Navarro,
  * Rodrigo Paredes, Patricio V. Poblete, and Peter Sanders) International Journal
  * of Foundations of Computer Science, November 2011. As the title suggests, it
  * is inspired by quickheaps, and indeed the underlying representation looks
  * like a quickheap.
  *
- * How does that work? LSTs are defined as a sum type. Given a type t with a
- * total order, a leftmost skeleton tree (LST) is either
+ * LSTs are defined as a sum type. Given a type t with a total order, a leftmost
+ * skeleton tree (LST) is either
  *
  *	- a multiset B of values of type t, called a "bucket", or
  *	- a triple (r, L, B) where r (the "root") is of type t, L is an LST,
@@ -43,8 +43,8 @@ RCSID("")
  *
  * so an LST is effectively a sequence of buckets separated by roots that
  * collectively honor the ordering constraints. It can be kept in an array.
- * As with a quickheap, there's a stack of root indices, and to make things
- * consistent there's a fictitious stack entry that points past the end of the
+ * As with a quickheap, there's a stack of root (or pivot) indices, and to make
+ * things consistent there's a fictitious stack entry that points past the
  * last bucket and acts like an infinite pivot value, guaranteed to come last.
  *
  * Functions defined for LSTs:
@@ -120,12 +120,6 @@ RCSID("")
  * binary search trees (BSTs), which for insertions randomly choose between the
  * insertion we know and love and rotating things to make the new item the root.
  * For the RQs, at insertion you may flatten the tree and put in the new item.
- *
- * We will make add, peek, and pop work first (Insert, FindMin, and ExtractMin in
- * the paper), and then add delete, make LSTs growable, and add the above-mentioned
- * special case.
- *
- *
  */
 
 typedef struct {
@@ -605,7 +599,7 @@ void *fr_lst_peek(fr_lst_t *lst)
 /*
  * Here we want to delete the "minimum" find_empty_left() finds for us.
  * By the above reasoning, it is necessarily a pivot, and actually should
- * be at lst->id (currently always zero).
+ * be at lst->idx.
  */
 void *fr_lst_pop(fr_lst_t *lst)
 {
