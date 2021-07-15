@@ -473,41 +473,68 @@ inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
  * Note that it's only called for trees that are a single nonempty bucket;
  * if it's a subtree it is thus necessarily the leftmost.
  */
-static void partition(fr_lst_t *lst, int32_t stack_index)
+inline static void partition(fr_lst_t *lst, int32_t stack_index)
 {
 	int32_t	low = bucket_lwb(lst, stack_index);
 	int32_t	high = bucket_upb(lst, stack_index);
+	int32_t	l, h;
 	int32_t	pivot_index;
 	void	*pivot;
 	void	*temp;
-	int32_t	i;
+
+	/*
+	 * Hoare partition doesn't do the trivial case, so catch it here.
+	 */
+	if (equivalent(lst, low, high)) {
+		stack_push(lst->s, low);
+		return;
+	}
 
 	pivot_index = low + (fr_fast_rand(&lst->rand_ctx) % (high + 1 - low));
 	pivot = item(lst, pivot_index);
 
-	/* move pivot to the top */
-	if (pivot_index != high) {
-		lst_move(lst, pivot_index, item(lst, high));
-		lst_move(lst, high, pivot);
+	if (pivot_index != low) {
+		lst_move(lst, pivot_index, item(lst, low));
+		lst_move(lst, low, pivot);
 	}
 
-	/* Lomuto partition; it's slower than Hoare, but let's get it to work first */
-	i = low - 1;
-
-	for (int32_t j = low; j < high; j++) {
-		if (lst->cmp(item(lst, j), pivot) < 0) {
-			i++;
-			temp = item(lst, i);
-			lst_move(lst, i, item(lst, j));
-			lst_move(lst, j, temp);
-		}
+	/* 
+	 * Hoare partition; on the avaerage, it does a third the swaps of
+	 * Lomuto.
+	 */
+	l = low - 1;
+	h = high + 1;
+	for (;;) {
+		while (lst->cmp(item(lst, --h), pivot) > 0) ;
+		while (lst->cmp(item(lst, ++l), pivot) < 0) ;
+		if (l >= h) break;
+		temp = item(lst, l);
+		lst_move(lst, l, item(lst, h));
+		lst_move(lst, h, temp);
 	}
 
-	i++;
-	lst_move(lst, high, item(lst, i));
-	lst_move(lst, i, pivot);
+	/*
+	 * Hoare partition doesn't guarantee the pivot sits at location h
+	 * the way Lomuto does and LST needs, so...
+	 */
+	pivot_index = item_index(lst, pivot);
+	if (pivot_index >= reduce(lst, low)) {
+		pivot_index = low + pivot_index - reduce(lst, low);
+	} else {
+		pivot_index = high - (reduce(lst, high) - pivot_index);
+	}
 
-	stack_push(lst->s, i);
+	if (pivot_index < h) {
+		lst_move(lst, pivot_index, item(lst, h));
+		lst_move(lst, h, pivot);
+	}
+	if (pivot_index > h) {
+		h++;
+		lst_move(lst, pivot_index, item(lst, h));
+		lst_move(lst, h, pivot);
+	}
+
+	stack_push(lst->s, h);
 }
 
 /*
