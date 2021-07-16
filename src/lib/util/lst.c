@@ -142,6 +142,7 @@ struct fr_lst_s {
 
 static int32_t	lst_size(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
 static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
+static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(nonnull);
 
 #define index_addr(_lst, _data) ((uint8_t *)(_data) + (_lst)->offset)
 #define item_index(_lst, _data) (*(int32_t *)index_addr((_lst), (_data)))
@@ -311,13 +312,10 @@ inline static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
  * The caller must have made sure the location is available and exists
  * in said array.
  */
-inline static int lst_move(fr_lst_t *lst, int32_t location, void *data)
+inline static void lst_move(fr_lst_t *lst, int32_t location, void *data)
 {
-	if (unlikely(!data)) return -1;
-
 	item(lst, location) = data;
 	item_index(lst, data) = reduce(lst, location);
-	return 0;
 }
 
 /*
@@ -498,7 +496,7 @@ inline static void partition(fr_lst_t *lst, int32_t stack_index)
 		lst_move(lst, low, pivot);
 	}
 
-	/* 
+	/*
 	 * Hoare partition; on the avaerage, it does a third the swaps of
 	 * Lomuto.
 	 */
