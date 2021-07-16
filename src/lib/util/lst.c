@@ -81,9 +81,10 @@ RCSID("")
  * delete values. (You get the interface of the fr_heap_t constructor if you
  * leave out the array; guaranteed constant time then, of course.)
  *
- * How to calculate size(T)? It's just the position of the pivot following it (hence
- * the fictitious pivot, to make this work)--with a little finesse once you go
- * circular.
+ * How to calculate size(T)? It's just the distance from the idx field of the
+ * tree (or the top-level tree containing it) to the pivot following it (hence
+ * the fictitious pivot, so there alwyas is one). Note that it may wrap around
+ * the array.
  *
  * Insert an item into a bucket: increment the fictitious pivot to make a free space
  * at the end, then walk back through the buckets. We don't care about ordering within
@@ -93,25 +94,24 @@ RCSID("")
  * move as well, and hence other stack entries change.)
  *
  * Delete an arbitrary item: this requires a way to get from an item to its location
- * in the array (the paper suggests a dictionary, but better to go with what current
+ * in the array (the paper suggests a dictionary, this does what the current
  * fr_heap_t does, i.e. insist on a space in items to hold the location). That leaves
  * a space, so copy the last item of the relevant bucket into the space left by the
  * deleted item, and from there on you work your way back down the buckets, sort of
  * the inverse of the insert. (Ditto about pivot motion/stack adjustment.)
  *
  * NOTE: of course, insertions and deletions mean updating the dictionary or saved location
- * of items moved. The irrelevance of order within buckets works nicely with that,
- * minimizing the number of items moved.
+ * of items moved. The irrelevance of order within buckets minimizes those updates.
  *
  * Special case: extracting the leftmost node when doing so empties the leftmost bucket
  * can be done by treating the array as a circular array (just like quickheaps),
- * so you just increment a starting position rather than moving data. Leftmost bucket
- * doesn't have a pivot, so absorb the pivot into the new leftmost bucket by popping
+ * so you just increment idx rather than moving data. The leftmost bucket doesn't
+ * have a pivot, so absorb the pivot into the new leftmost bucket by popping
  * the pivot stack. O(1), and we get idx (starting position) back that we had in the
  * quickheap. (How often does that happen, you ask? Every single time you pop.)
  *
  * Flattening a subtree into a bucket: you need only pop the top however many pivots
- * were in the subtree.
+ * were in the subtree. (Don't pop the fictitious one!)
  *
  * Unflattening the leftmost bucket (if it's non-empty): pick your pivot, do the standard
  * partition, and push the new "root" location.
@@ -130,7 +130,7 @@ typedef struct {
 
 struct fr_lst_s {
 	int32_t		capacity;	//!< Number of elements that will fit
-	int32_t		idx;		//!< Starting point, to let us ultimately treat our array as circular
+	int32_t		idx;		//!< Starting index, initially zero
 	int32_t		num_elements;	//!< Number of elements in the LST
 	size_t		offset;		//!< Offset of heap index in element structure.
 	void		**p;		//!< Array of elements.
@@ -173,9 +173,8 @@ static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(nonnul
  * so the outside just passes the LST pointer. Immediate consequence: the index
  * is in the half-open interval [0, stack_depth(lst->s)).
  *
- * Remember, the fictitious pivot at the bottom of the stack isn't actually in
- * the array. (lst, 0) represents the whole tree, but never use item(lst,
- * stack_item(lst->s, 0))
+ * The fictitious pivot at the bottom of the stack isn't actually in the array,
+ * so don't try to refer to what's there.
  *
  * The index is visible for the size and length functions, since they need
  * to know the subtree they're working on.
@@ -362,8 +361,8 @@ static void bucket_add(fr_lst_t *lst, int32_t stack_index, void *data)
 }
 
 /*
- * Reduces pivot stack indices based on their difference from lst->idx,
- * and then reduces lst->idx.
+ * Reduce pivot stack indices based on their difference from lst->idx,
+ * and then reduce lst->idx.
  */
 static void lst_reduce_indices(fr_lst_t *lst)
 {
@@ -379,13 +378,13 @@ static void lst_reduce_indices(fr_lst_t *lst)
 /*
  * Make more space available in an LST.
  * The LST paper only mentions this option in passing, pointing out that it's O(n); the only
- * constructor in the paper lets you hand it an array of items to initiailly insert
+ * constructor in the paper lets you hand it an array of items to initially insert
  * in the LST; so elements will have to be removed to make room for more. OTOH, it's
  * obvious how to set one up with space for some maximum number but leaving it initially
  * empty.
  *
  * Were it not for the circular array optimization, it would be talloc_realloc() and done;
- * it works or it doesn't. (That's still O(n), since it may require coping the data.)
+ * it works or it doesn't. (That's still O(n), since it may require copying the data.)
  *
  * With the circular array optimization, if lst->idx refers to something other than the
  * beginning of the array, you have to move the elements preceding it to beginning of the
@@ -434,10 +433,10 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 	 */
 	for (stack_index = 0; !is_bucket(lst, stack_index); stack_index++) {
 		/*
-		 * The stack_index check in the flatten test is a hack
-		 * to see whether it's the sole source of attempts to flatten
-		 * the entire tree, which as things stand will pop the fictitious
-		 * pivot stack entry. It may well not be the ultimate fix.
+		 * The stack_index check doesn't appear in the paper, but
+		 * without it the fictitious pivot entry, which must never
+		 * go away, soemtimes does.
+		 * todo: see if there's a better way.
 		 */
 		if (stack_index && fr_fast_rand(&lst->rand_ctx) % (lst_size(lst, stack_index) + 1) == 0) {
 			lst_flatten(lst, stack_index);
@@ -459,7 +458,7 @@ inline static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
 /*
  * Note: buckets can be empty, in which case the lower bound will in fact
  * be one less than the upper bound, and should that be the leftmost bucket,
- * will actually be -1.
+ * will actually be lst->idx - 1.
  */
 inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
 {
@@ -468,8 +467,8 @@ inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
 
 /*
  * Partition an LST
- * Note that it's only called for trees that are a single nonempty bucket;
- * if it's a subtree it is thus necessarily the leftmost.
+ * It's only called for trees that are a single nonempty bucket;
+ * if it's a subtree, it is thus necessarily the leftmost.
  */
 inline static void partition(fr_lst_t *lst, int32_t stack_index)
 {
