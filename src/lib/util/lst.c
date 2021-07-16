@@ -512,7 +512,7 @@ inline static void partition(fr_lst_t *lst, int32_t stack_index)
 
 	/*
 	 * Hoare partition doesn't guarantee the pivot sits at location h
-	 * the way Lomuto does and LST needs, so...
+	 * the way Lomuto does and LST needs, so first get its location...
 	 */
 	pivot_index = item_index(lst, pivot);
 	if (pivot_index >= reduce(lst, low)) {
@@ -521,6 +521,9 @@ inline static void partition(fr_lst_t *lst, int32_t stack_index)
 		pivot_index = high - (reduce(lst, high) - pivot_index);
 	}
 
+	/*
+	 * ...and then move it if need be.
+	 */
 	if (pivot_index < h) {
 		lst_move(lst, pivot_index, item(lst, h));
 		lst_move(lst, h, pivot);
