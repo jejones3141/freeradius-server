@@ -141,8 +141,20 @@ struct fr_lst_s {
 };
 
 static int32_t	lst_size(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
-static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
+static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull, always_inline);
 static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(nonnull);
+static void	lst_flatten(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
+static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(always_inline);
+static int32_t	find_empty_left(fr_lst_t *lst) CC_HINT(always_inline);
+
+static int32_t	bucket_lwb(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
+static int32_t	bucket_upb(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
+
+static int	stack_push(pivot_stack_t *s, int32_t pivot) CC_HINT(always_inline);
+static void	stack_pop(pivot_stack_t *s, int32_t n) CC_HINT(always_inline);
+static int32_t	stack_item(pivot_stack_t *s, int32_t index) CC_HINT(always_inline);
+static int32_t	stack_depth(pivot_stack_t *s) CC_HINT(always_inline);
+static void	stack_set(pivot_stack_t *s, int32_t index, int32_t new_value) CC_HINT(always_inline);
 
 #define index_addr(_lst, _data) ((uint8_t *)(_data) + (_lst)->offset)
 #define item_index(_lst, _data) (*(int32_t *)index_addr((_lst), (_data)))
@@ -199,41 +211,47 @@ static pivot_stack_t	*stack_alloc(TALLOC_CTX *ctx)
 	return s;
 }
 
+static bool stack_expand(pivot_stack_t *s)
+{
+	int32_t	*n;
+	size_t	n_size = 2 * s->size;
+
+	n = talloc_realloc(s, s->data, int32_t, n_size);
+	if (!n) {
+		fr_strerror_printf("Failed expanding lst stack to %zu elements (%zu bytes)",
+				   n_size, n_size * sizeof(int32_t));
+		return false;
+	}
+
+	s->size = n_size;
+	s->data = n;
+	return true;
+}
+
 static int stack_push(pivot_stack_t *s, int32_t pivot)
 {
-	if (unlikely(s->depth == s->size)) {
-		int32_t	*n;
-		size_t	n_size = 2 * s->size;
+	if (unlikely(s->depth == s->size && !stack_expand(s))) return -1;
 
-		n = talloc_realloc(s, s->data, int32_t, n_size);
-		if (!n) {
-			fr_strerror_printf("Failed expanding lst stack to %zu elements (%zu bytes)",
-					   n_size, n_size * sizeof(int32_t));
-			return -1;
-		}
-		s->size = n_size;
-		s->data = n;
-	}
 	s->data[s->depth++] = pivot;
 	return 0;
 }
 
-inline static void stack_pop(pivot_stack_t *s, int32_t n)
+static void stack_pop(pivot_stack_t *s, int32_t n)
 {
 	s->depth -= n;
 }
 
-inline static int32_t stack_depth(pivot_stack_t *s)
+static int32_t stack_depth(pivot_stack_t *s)
 {
 	return s->depth;
 }
 
-inline static int32_t stack_item(pivot_stack_t *s, int32_t index)
+static int32_t stack_item(pivot_stack_t *s, int32_t index)
 {
 	return s->data[index];
 }
 
-inline static void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
+static void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
 {
 	s->data[index] = new_value;
 }
@@ -274,7 +292,7 @@ cleanup:
 /*
  * The length function for LSTs (how many buckets it contains)
  */
-inline static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
+static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_depth(lst->s) - stack_index;
 }
@@ -282,7 +300,7 @@ inline static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
 /*
  * The size function for LSTs (number of items a (sub)tree contains)
  */
-inline static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
+static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
 {
 	int32_t	reduced_right, reduced_idx;
 
@@ -301,7 +319,7 @@ inline static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
  * NOTE: so doing leaves the passed stack_index valid--we just add
  * everything once in the left subtree to it.
  */
-inline static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
+static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
 {
 	stack_pop(lst->s, stack_depth(lst->s) - (stack_index + 0));
 }
@@ -311,7 +329,7 @@ inline static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
  * The caller must have made sure the location is available and exists
  * in said array.
  */
-inline static void lst_move(fr_lst_t *lst, int32_t location, void *data)
+static void lst_move(fr_lst_t *lst, int32_t location, void *data)
 {
 	item(lst, location) = data;
 	item_index(lst, data) = reduce(lst, location);
@@ -425,7 +443,7 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 	/*
 	 * Expand if need be. Not in the paper, but we want the capability.
 	 */
-	if (lst->num_elements == lst->capacity && !lst_expand(lst)) return -1;
+	if (unlikely(lst->num_elements == lst->capacity && !lst_expand(lst))) return -1;
 
 	/*
 	 * How for the real work. Aside from the random flattening, all we're doing
@@ -449,7 +467,7 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 	return 0;
 }
 
-inline static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
+static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
 {
 	if (is_bucket(lst, stack_index)) return lst->idx;
 	return stack_item(lst->s, stack_index + 1) + 1;
@@ -460,7 +478,7 @@ inline static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
  * be one less than the upper bound, and should that be the leftmost bucket,
  * will actually be lst->idx - 1.
  */
-inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
+static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_item(lst->s, stack_index) - 1;
 }
@@ -470,7 +488,7 @@ inline static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
  * It's only called for trees that are a single nonempty bucket;
  * if it's a subtree, it is thus necessarily the leftmost.
  */
-inline static void partition(fr_lst_t *lst, int32_t stack_index)
+static void partition(fr_lst_t *lst, int32_t stack_index)
 {
 	int32_t	low = bucket_lwb(lst, stack_index);
 	int32_t	high = bucket_upb(lst, stack_index);
