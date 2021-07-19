@@ -217,7 +217,7 @@ static bool stack_expand(pivot_stack_t *s)
 	size_t	n_size = 2 * s->size;
 
 	n = talloc_realloc(s, s->data, int32_t, n_size);
-	if (!n) {
+	if (unlikely(!n)) {
 		fr_strerror_printf("Failed expanding lst stack to %zu elements (%zu bytes)",
 				   n_size, n_size * sizeof(int32_t));
 		return false;
@@ -416,7 +416,7 @@ static bool lst_expand(fr_lst_t *lst)
 	int32_t	old_capacity = lst->capacity;
 
 	n = talloc_realloc(lst, lst->p, void *, n_capacity);
-	if (!n) {
+	if (unlikely(!n)) {
 		fr_strerror_printf("Failed expanding lst to %zu elements (%zu bytes)",
 				   n_capacity, n_capacity * sizeof(void *));
 		return false;
@@ -635,7 +635,7 @@ void *fr_lst_peek(fr_lst_t *lst)
 {
 	int32_t	stack_index;
 
-	if (lst->num_elements == 0) return NULL;
+	if (unlikely(lst->num_elements == 0)) return NULL;
 
 	stack_index = find_empty_left(lst);
 	return item(lst, stack_item(lst->s, stack_index));
@@ -651,7 +651,7 @@ void *fr_lst_pop(fr_lst_t *lst)
 	int32_t	stack_index, location;
 	void	*min;
 
-	if (lst->num_elements == 0) return NULL;
+	if (unlikely(lst->num_elements == 0)) return NULL;
 
 	stack_index = find_empty_left(lst);
 	location = stack_item(lst->s, stack_index);
