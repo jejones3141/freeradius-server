@@ -162,6 +162,7 @@ static void	stack_set(pivot_stack_t *s, int32_t index, int32_t new_value) CC_HIN
 #define equivalent(_lst, _index1, _index2)	(reduce((_lst), (_index1) - (_index2)) == 0)
 #define item(_lst, _index)			((_lst)->p[reduce((_lst), (_index))])
 #define reduce(_lst, _index)			((_index) & ((_lst)->capacity - 1))
+#define pivot_item(_lst, _index)		item((_lst), stack_item((_lst)->s, (_index)))
 
 /*
  * The LST as defined in the paper has a fixed size set at creation.
@@ -321,7 +322,7 @@ static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
  */
 static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
 {
-	stack_pop(lst->s, stack_depth(lst->s) - (stack_index + 0));
+	stack_pop(lst->s, stack_depth(lst->s) - stack_index);
 }
 
 /*
@@ -460,7 +461,7 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 			lst_flatten(lst, stack_index);
 			break;
 		}
-		if (lst->cmp(data, item(lst, stack_item(lst->s, stack_index + 1))) >= 0) break;
+		if (lst->cmp(data, pivot_item(lst, stack_index + 1)) >= 0) break;
 	}
 
 	bucket_add(lst, stack_index, data);
@@ -558,18 +559,15 @@ static void partition(fr_lst_t *lst, int32_t stack_index)
 /*
  * Delete an item from a bucket in an LST
  */
-static void bucket_delete(fr_lst_t *lst, void *data)
+static void bucket_delete(fr_lst_t *lst, int32_t stack_index, void *data)
 {
 	int32_t	location = item_index(lst, data);
-	int32_t	stack_index;
 	int32_t	top;
 
 	if (equivalent(lst, location, lst->idx)) {
 		lst->idx++;
 		if (equivalent(lst, lst->idx, 0)) lst_reduce_indices(lst);
 	} else {
-		for (stack_index = stack_depth(lst->s); stack_item(lst->s, --stack_index) < location; ) ;
-
 		for (;;) {
 			top = bucket_upb(lst, stack_index);
 			if (!equivalent(lst, location, top)) lst_move(lst, location, item(lst, top));
@@ -592,23 +590,29 @@ static void bucket_delete(fr_lst_t *lst, void *data)
  */
 int fr_lst_extract(fr_lst_t *lst, void *data)
 {
-	int32_t	stack_index, location;
+	int32_t	stack_index;
+	int8_t	cmp;
 
 	if (unlikely(lst->num_elements == 0)) {
-		fr_strerror_const("Tried to extract element from empty heap");
+		fr_strerror_const("Tried to extract element from empty LST");
 		return -1;
 	}
 
-	location = item_index(lst, data);
-	if (unlikely(location < 0)) return -1;
+	if (unlikely(item_index(lst, data) < 0)) {
+		fr_strerror_const("Tried to extract element not in LST");
+		return -1;
+	}
 
-	for (stack_index = stack_depth(lst->s); stack_item(lst->s, --stack_index) < location; ) ;
+	stack_index = 0;
+	while (!is_bucket(lst, stack_index) && (cmp = lst->cmp(pivot_item(lst, stack_index + 1), data)) >= 0) {
+		if (cmp == 0) {
+			lst_flatten(lst, stack_index + 1);
+			break;
+		}
+		stack_index++;
+	}
 
-	/* Are we deleting a pivot? Flatten first. */
-	if (stack_item(lst->s, stack_index) == location) lst_flatten(lst, stack_index);
-
-	bucket_delete(lst, data);
-
+	bucket_delete(lst, stack_index, data);
 	return 1;
 }
 
@@ -638,7 +642,7 @@ void *fr_lst_peek(fr_lst_t *lst)
 	if (unlikely(lst->num_elements == 0)) return NULL;
 
 	stack_index = find_empty_left(lst);
-	return item(lst, stack_item(lst->s, stack_index));
+	return pivot_item(lst, stack_index);
 }
 
 /*
@@ -658,7 +662,7 @@ void *fr_lst_pop(fr_lst_t *lst)
 
 	min = item(lst, location);
 	lst_flatten(lst, stack_index);
-	bucket_delete(lst, min);
+	bucket_delete(lst, stack_index, min);
 
 	return min;
 }
