@@ -140,22 +140,6 @@ struct fr_lst_s {
 	fr_heap_cmp_t	cmp;		//!< Comparator function.
 };
 
-static int32_t	lst_size(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull);
-static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index) CC_HINT(nonnull, always_inline);
-static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(nonnull);
-static void	lst_flatten(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
-static void	lst_move(fr_lst_t *lst, int32_t location, void *data) CC_HINT(always_inline);
-static int32_t	find_empty_left(fr_lst_t *lst) CC_HINT(always_inline);
-
-static int32_t	bucket_lwb(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
-static int32_t	bucket_upb(fr_lst_t *lst, int32_t stack_index) CC_HINT(always_inline);
-
-static int	stack_push(pivot_stack_t *s, int32_t pivot) CC_HINT(always_inline);
-static void	stack_pop(pivot_stack_t *s, int32_t n) CC_HINT(always_inline);
-static int32_t	stack_item(pivot_stack_t *s, int32_t index) CC_HINT(always_inline);
-static int32_t	stack_depth(pivot_stack_t *s) CC_HINT(always_inline);
-static void	stack_set(pivot_stack_t *s, int32_t index, int32_t new_value) CC_HINT(always_inline);
-
 #define index_addr(_lst, _data) ((uint8_t *)(_data) + (_lst)->offset)
 #define item_index(_lst, _data) (*(int32_t *)index_addr((_lst), (_data)))
 
@@ -229,7 +213,7 @@ static bool stack_expand(pivot_stack_t *s)
 	return true;
 }
 
-static int stack_push(pivot_stack_t *s, int32_t pivot)
+static inline CC_HINT(always_inline, nonnull) int stack_push(pivot_stack_t *s, int32_t pivot)
 {
 	if (unlikely(s->depth == s->size && !stack_expand(s))) return -1;
 
@@ -237,22 +221,22 @@ static int stack_push(pivot_stack_t *s, int32_t pivot)
 	return 0;
 }
 
-static void stack_pop(pivot_stack_t *s, int32_t n)
+static inline CC_HINT(always_inline, nonnull) void stack_pop(pivot_stack_t *s, int32_t n)
 {
 	s->depth -= n;
 }
 
-static int32_t stack_depth(pivot_stack_t *s)
+static inline CC_HINT(always_inline, nonnull) int32_t stack_depth(pivot_stack_t *s)
 {
 	return s->depth;
 }
 
-static int32_t stack_item(pivot_stack_t *s, int32_t index)
+static inline CC_HINT(always_inline, nonnull) int32_t stack_item(pivot_stack_t *s, int32_t index)
 {
 	return s->data[index];
 }
 
-static void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
+static inline CC_HINT(always_inline, nonnull) void stack_set(pivot_stack_t *s, int32_t index, int32_t new_value)
 {
 	s->data[index] = new_value;
 }
@@ -293,7 +277,7 @@ cleanup:
 /*
  * The length function for LSTs (how many buckets it contains)
  */
-static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
+static inline CC_HINT(always_inline, nonnull) int32_t lst_length(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_depth(lst->s) - stack_index;
 }
@@ -301,7 +285,7 @@ static int32_t	lst_length(fr_lst_t *lst, int32_t stack_index)
 /*
  * The size function for LSTs (number of items a (sub)tree contains)
  */
-static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
+static CC_HINT(nonnull) int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
 {
 	int32_t	reduced_right, reduced_idx;
 
@@ -320,7 +304,7 @@ static int32_t lst_size(fr_lst_t *lst, int32_t stack_index)
  * NOTE: so doing leaves the passed stack_index valid--we just add
  * everything once in the left subtree to it.
  */
-static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
+static inline CC_HINT(always_inline, nonnull) void lst_flatten(fr_lst_t *lst, int32_t stack_index)
 {
 	stack_pop(lst->s, stack_depth(lst->s) - stack_index);
 }
@@ -330,7 +314,7 @@ static void lst_flatten(fr_lst_t *lst, int32_t stack_index)
  * The caller must have made sure the location is available and exists
  * in said array.
  */
-static void lst_move(fr_lst_t *lst, int32_t location, void *data)
+static inline CC_HINT(always_inline, nonnull) void lst_move(fr_lst_t *lst, int32_t location, void *data)
 {
 	item(lst, location) = data;
 	item_index(lst, data) = reduce(lst, location);
@@ -468,7 +452,7 @@ int fr_lst_insert(fr_lst_t *lst, void *data)
 	return 0;
 }
 
-static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
+static inline CC_HINT(always_inline, nonnull) int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
 {
 	if (is_bucket(lst, stack_index)) return lst->idx;
 	return stack_item(lst->s, stack_index + 1) + 1;
@@ -479,7 +463,7 @@ static int32_t bucket_lwb(fr_lst_t *lst, int32_t stack_index)
  * be one less than the upper bound, and should that be the leftmost bucket,
  * will actually be lst->idx - 1.
  */
-static int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
+static inline CC_HINT(always_inline, nonnull) int32_t bucket_upb(fr_lst_t *lst, int32_t stack_index)
 {
 	return stack_item(lst->s, stack_index) - 1;
 }
@@ -624,7 +608,7 @@ int fr_lst_extract(fr_lst_t *lst, void *data)
  * the leftmost pivot, but that only works if the left subtree is the empty bucket,
  * hence the partition and the termination condition.
  */
-static int32_t	find_empty_left(fr_lst_t *lst)
+static inline CC_HINT(always_inline, nonnull) int32_t find_empty_left(fr_lst_t *lst)
 {
 	int32_t	stack_index = 0;
 
